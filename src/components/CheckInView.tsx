@@ -8,19 +8,18 @@ import {
   Calendar, 
   Sparkles,
   ArrowRight,
-  Shield,
   UserPlus,
   X,
   Camera,
   Upload,
-  RefreshCw,
   Trash2,
-  Video,
-  VideoOff,
   Zap,
-  Activity
+  Activity,
+  Download,
+  Smartphone
 } from 'lucide-react';
 import gsap from 'gsap';
+import QRCode from 'qrcode';
 import { Member, CheckInRecord } from '../types';
 
 interface CheckInViewProps {
@@ -44,6 +43,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
   const [checkInType, setCheckInType] = useState<'Gym Entrance' | 'PT Session' | 'Group Class'>('Gym Entrance');
   const [selectedZone, setSelectedZone] = useState('Zone A - Free Weights & PT Cage');
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
   // Quick Register Modal state
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
@@ -61,7 +61,6 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Default avatar preset if none provided
   const defaultPresetAvatar = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80';
 
   const zones = [
@@ -72,25 +71,63 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
     'Studio 2 - Spinning & Cycling Room'
   ];
 
+  // Sync selectedMemberId when currentMember changes (e.g. after buying a course or registering)
+  useEffect(() => {
+    setSelectedMemberId(currentMember.id);
+  }, [currentMember.id]);
+
+  // Active member for the pass card
+  const displayedMember = members.find(m => m.id === selectedMemberId) || currentMember;
+
+  // Generate REAL Scannable ISO QR Code whenever displayedMember changes
+  useEffect(() => {
+    const generateRealQrCode = async () => {
+      try {
+        const baseUrl = window.location.origin;
+        const scanUrl = `${baseUrl}/?checkin=${encodeURIComponent(displayedMember.id)}&name=${encodeURIComponent(displayedMember.name)}&phone=${encodeURIComponent(displayedMember.phone)}&type=${encodeURIComponent(displayedMember.memberType)}&pt=${displayedMember.remainingPtSessions}&join=${encodeURIComponent(displayedMember.joinDate)}`;
+
+        const dataUrl = await QRCode.toDataURL(scanUrl, {
+          width: 300,
+          margin: 2,
+          color: {
+            dark: '#09090b',
+            light: '#ffffff',
+          },
+          errorCorrectionLevel: 'M',
+        });
+        setQrDataUrl(dataUrl);
+      } catch (err) {
+        console.error('QR generation error:', err);
+      }
+    };
+
+    generateRealQrCode();
+  }, [displayedMember]);
+
   // GSAP Entrance Animations
   useEffect(() => {
     const ctx = gsap.context(() => {
       gsap.fromTo('.athlete-pass-card', 
-        { opacity: 0, y: 30, scale: 0.98 }, 
-        { opacity: 1, y: 0, scale: 1, duration: 0.65, ease: 'power3.out' }
+        { opacity: 0, y: 20 }, 
+        { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }
       );
       gsap.fromTo('.kiosk-panel', 
-        { opacity: 0, y: 25 }, 
-        { opacity: 1, y: 0, duration: 0.65, delay: 0.15, ease: 'power3.out' }
-      );
-      gsap.fromTo('.attendance-panel', 
-        { opacity: 0, y: 25 }, 
-        { opacity: 1, y: 0, duration: 0.65, delay: 0.25, ease: 'power3.out' }
+        { opacity: 0, y: 20 }, 
+        { opacity: 1, y: 0, duration: 0.45, delay: 0.1, ease: 'power2.out' }
       );
     });
 
     return () => ctx.revert();
   }, []);
+
+  // Download QR Code Image
+  const handleDownloadQr = () => {
+    if (!qrDataUrl) return;
+    const link = document.createElement('a');
+    link.href = qrDataUrl;
+    link.download = `FitPulse-QR-${displayedMember.id}-${displayedMember.name}.png`;
+    link.click();
+  };
 
   // Camera Management Functions
   const startCamera = async () => {
@@ -112,7 +149,6 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
       streamRef.current = stream;
       setIsCameraActive(true);
 
-      // Short delay to ensure video element is bound
       setTimeout(() => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -170,7 +206,6 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
     }
   };
 
-  // Close modal and cleanup
   const handleCloseRegisterModal = () => {
     stopCamera();
     setIsRegisterModalOpen(false);
@@ -231,109 +266,17 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
     setRegAvatar('');
 
     setStatusMessage({
-      text: `ลงทะเบียนสำเร็จ! สมาชิกใหม่: ${created.name} (${created.id}) พร้อมรูปถ่ายประจำตัว`,
+      text: `สร้างบัตรสมาชิกและ QR Code ใหม่สำเร็จ! สมาชิก: ${created.name} (${created.id}) สามารถสแกน QR ได้ทันที`,
       type: 'success'
     });
-    setTimeout(() => setStatusMessage(null), 4500);
+    setTimeout(() => setStatusMessage(null), 5000);
   };
-
-  // Generate SVG QR Code pattern visually based on member ID
-  const renderQrPattern = (code: string) => {
-    const size = 9;
-    const cells = [];
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        const isCorner = 
-          (r < 3 && c < 3) || 
-          (r < 3 && c >= size - 3) || 
-          (r >= size - 3 && c < 3);
-        const charCode = code.charCodeAt((r * size + c) % code.length) || 0;
-        const isFilled = isCorner || (charCode + r * 7 + c * 13) % 2 === 0;
-        cells.push({ r, c, isFilled, isCorner });
-      }
-    }
-
-    return (
-      <svg viewBox="0 0 180 180" className="w-48 h-48 mx-auto bg-zinc-950 p-3 rounded-2xl border border-lime-400/30 shadow-inner">
-        {/* Finder pattern TL */}
-        <rect x="15" y="15" width="45" height="45" rx="6" fill="#18181b" stroke="#a3e635" strokeWidth="3" />
-        <rect x="23" y="23" width="29" height="29" rx="3" fill="#09090b" />
-        <rect x="29" y="29" width="17" height="17" rx="2" fill="#a3e635" />
-
-        {/* Finder pattern TR */}
-        <rect x="120" y="15" width="45" height="45" rx="6" fill="#18181b" stroke="#c084fc" strokeWidth="3" />
-        <rect x="128" y="23" width="29" height="29" rx="3" fill="#09090b" />
-        <rect x="134" y="29" width="17" height="17" rx="2" fill="#c084fc" />
-
-        {/* Finder pattern BL */}
-        <rect x="15" y="120" width="45" height="45" rx="6" fill="#18181b" stroke="#a3e635" strokeWidth="3" />
-        <rect x="23" y="128" width="29" height="29" rx="3" fill="#09090b" />
-        <rect x="29" y="134" width="17" height="17" rx="2" fill="#a3e635" />
-
-        {/* Athletic Data points */}
-        <g fill="#71717a">
-          <rect x="75" y="20" width="12" height="12" rx="2" fill="#a3e635" />
-          <rect x="95" y="20" width="12" height="12" rx="2" fill="#e4e4e7" />
-          <rect x="75" y="40" width="12" height="12" rx="2" fill="#c084fc" />
-          <rect x="20" y="75" width="12" height="12" rx="2" fill="#a3e635" />
-          <rect x="40" y="75" width="12" height="12" rx="2" fill="#e4e4e7" />
-          <rect x="20" y="95" width="12" height="12" rx="2" fill="#c084fc" />
-          <rect x="75" y="75" width="30" height="30" rx="6" fill="#18181b" stroke="#a3e635" strokeWidth="2" />
-          <rect x="120" y="75" width="12" height="12" rx="2" fill="#a3e635" />
-          <rect x="145" y="90" width="12" height="12" rx="2" fill="#e4e4e7" />
-          <rect x="75" y="120" width="12" height="12" rx="2" fill="#c084fc" />
-          <rect x="95" y="135" width="12" height="12" rx="2" fill="#a3e635" />
-          <rect x="120" y="120" width="12" height="12" rx="2" fill="#e4e4e7" />
-          <rect x="140" y="140" width="15" height="15" rx="2" fill="#c084fc" />
-          <circle cx="90" cy="90" r="5" fill="#a3e635" />
-        </g>
-      </svg>
-    );
-  };
-
-  // Active member for the pass card (reflects selected member from dropdown)
-  const displayedMember = members.find(m => m.id === selectedMemberId) || currentMember;
 
   return (
-    <div className="space-y-8">
-      {/* Header Banner - Style 3: Electric Lime & Violet Athletic */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-zinc-950 via-purple-950/40 to-zinc-950 border border-zinc-800/80 p-6 sm:p-8 shadow-2xl">
-        <div className="absolute top-0 right-1/4 w-96 h-96 bg-lime-500/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-0 right-10 w-96 h-96 bg-violet-600/15 rounded-full blur-3xl pointer-events-none"></div>
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-lime-400/10 border border-lime-400/30 text-lime-400 text-xs font-black tracking-wide uppercase mb-3">
-              <Zap className="w-3.5 h-3.5 text-lime-400 fill-lime-400" />
-              <span>Smart QR Check-in Terminal</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase">
-              ระบบเช็คอินเข้ายิม & ตัดสิทธิ์คลาส
-            </h1>
-            <p className="text-zinc-400 text-sm mt-1 max-w-xl">
-              สแกน QR Code ดิจิทัล บันทึกเวลาเข้าใช้บริการ ตรวจสอบสิทธิ์ PT และเชื่อมต่อกับกล้องถ่ายรูปสมาชิกล่าสุด
-            </p>
-          </div>
-
-          <div className="flex items-center gap-4 bg-zinc-900/80 border border-zinc-800 p-4 rounded-2xl backdrop-blur-md shadow-lg">
-            <div className="p-3 bg-gradient-to-br from-lime-400/20 to-violet-500/20 rounded-xl border border-lime-400/30 text-lime-400">
-              <Users className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xs text-zinc-400 font-medium">ความหนาแน่นในยิมสด</div>
-              <div className="text-2xl font-black text-white">{gymOccupancy} <span className="text-xs font-normal text-zinc-500">/ 80 คน</span></div>
-              <div className="text-[11px] text-lime-400 flex items-center gap-1.5 font-bold mt-0.5">
-                <span className="w-2 h-2 rounded-full bg-lime-400 animate-ping"></span>
-                <span>ระบบสแกนออนไลน์พร้อมใช้งาน</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
+    <div className="space-y-6">
       {/* Notification Toast */}
       {statusMessage && (
-        <div className={`p-4 rounded-2xl flex items-center gap-3 border shadow-xl transition-all animate-bounce ${
+        <div className={`p-4 rounded-2xl flex items-center gap-3 border shadow-xl transition-all ${
           statusMessage.type === 'success' 
             ? 'bg-zinc-900 border-lime-400 text-lime-300 shadow-lime-500/20' 
             : 'bg-zinc-900 border-rose-500 text-rose-300 shadow-rose-500/20'
@@ -347,9 +290,9 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
         </div>
       )}
 
-      {/* Main Grid: Digital Pass & Check-in Desk */}
+      {/* Main Grid: Digital Pass (Left) & Check-in Desk (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Column: Digital Member Pass (Style 3: Electric Lime & Violet Athletic) */}
+        {/* Left Column: Digital Member Pass with REAL Scannable QR Code */}
         <div className="lg:col-span-5 space-y-6">
           <div className="athlete-pass-card relative rounded-3xl bg-gradient-to-b from-zinc-900 via-zinc-950 to-black border-2 border-lime-400/40 p-6 sm:p-7 shadow-2xl overflow-hidden glow-athletic">
             {/* Top Accent Strip */}
@@ -370,7 +313,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
             </div>
 
             {/* Member Card Profile Info with Photo */}
-            <div className="flex items-center gap-4 bg-zinc-900/90 p-4 rounded-2xl border border-zinc-800 mb-6">
+            <div className="flex items-center gap-4 bg-zinc-900/90 p-4 rounded-2xl border border-zinc-800 mb-5">
               <div className="relative shrink-0">
                 <img 
                   src={displayedMember.avatar} 
@@ -390,22 +333,49 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
               </div>
             </div>
 
-            {/* Visual QR Code Display */}
-            <div className="bg-zinc-950/90 p-6 rounded-2xl border border-zinc-800 text-center mb-6">
-              <div className="mb-3 text-xs text-zinc-400 font-semibold uppercase tracking-wider">
-                สแกนที่เครื่องอ่านประตูทางเข้ายิม
+            {/* REAL Scannable QR Code Display */}
+            <div className="bg-zinc-950/90 p-5 rounded-2xl border border-zinc-800 text-center mb-5">
+              <div className="mb-3 flex items-center justify-center gap-1.5 text-xs text-lime-400 font-bold">
+                <Smartphone className="w-4 h-4" />
+                <span>ใช้กล้องมือถือสแกน QR Code นี้เพื่อเช็คอินได้ทันที</span>
               </div>
-              {renderQrPattern(displayedMember.id)}
-              <div className="mt-3 font-mono font-black text-sm tracking-widest text-lime-400">
+
+              {qrDataUrl ? (
+                <div className="inline-block p-2.5 bg-white rounded-2xl shadow-xl border-4 border-lime-400/60">
+                  <img 
+                    src={qrDataUrl} 
+                    alt={`QR Code สำหรับ ${displayedMember.name}`}
+                    className="w-48 h-48 mx-auto block rounded-lg"
+                  />
+                </div>
+              ) : (
+                <div className="w-48 h-48 mx-auto bg-zinc-900 rounded-2xl flex items-center justify-center text-xs text-zinc-500">
+                  กำลังสร้าง QR Code...
+                </div>
+              )}
+
+              <div className="mt-3 font-mono font-black text-base tracking-widest text-lime-400">
                 {displayedMember.id}
               </div>
-              <div className="text-[11px] text-zinc-500 mt-1">
-                ระบบรักษาความปลอดภัยดิจิทัลสากล 256-bit AES
+              <div className="text-[11px] text-zinc-400 mt-0.5">
+                ผูกกับสมาชิก: <strong className="text-white">{displayedMember.name}</strong>
+              </div>
+
+              {/* Download QR Button */}
+              <div className="mt-3 pt-3 border-t border-zinc-800/80 flex justify-center">
+                <button
+                  type="button"
+                  onClick={handleDownloadQr}
+                  className="px-3.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-lime-400" />
+                  <span>ดาวน์โหลดรูป QR Code บัตรสมาชิก</span>
+                </button>
               </div>
             </div>
 
             {/* Member Statistics Overview */}
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="grid grid-cols-2 gap-3 mb-5">
               <div className="bg-zinc-900/90 border border-zinc-800 p-3.5 rounded-2xl">
                 <div className="text-[11px] text-zinc-400 font-medium">สิทธิ์ PT คงเหลือ</div>
                 <div className="text-2xl font-black text-lime-400 mt-0.5">
@@ -434,38 +404,36 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
         {/* Right Column: Staff / Scanner Kiosk Terminal */}
         <div className="lg:col-span-7 space-y-6">
           <div className="kiosk-panel rounded-3xl bg-zinc-900/90 border border-zinc-800 p-6 sm:p-7 shadow-xl">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-4 mb-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-800 pb-4 mb-6 gap-3">
               <div>
-                <h2 className="text-lg font-black text-white flex items-center gap-2 uppercase tracking-wide">
-                  <Sparkles className="w-5 h-5 text-lime-400" />
-                  <span>เคาน์เตอร์เช็คอิน & ตู้สแกนประจำจุด</span>
+                <h2 className="text-lg font-black text-white flex items-center gap-2">
+                  <QrCode className="w-5 h-5 text-lime-400" />
+                  <span>เคาน์เตอร์เช็คอิน & สร้าง QR สมาชิกใหม่</span>
                 </h2>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  เลือกสมาชิกและประเภทการเช็คอินเพื่อบันทึกข้อมูลและตัดรอบอัตโนมัติ
+                  เมื่อเพิ่มสมาชิกใหม่ หรือซื้อแพ็กเกจ ระบบจะสร้าง QR Code เฉพาะบุคคลให้สแกนได้ทันที
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsRegisterModalOpen(true)}
+                className="px-4 py-2.5 rounded-xl bg-lime-400 text-zinc-950 hover:bg-lime-300 font-black text-xs flex items-center gap-1.5 shadow-md shadow-lime-400/20 cursor-pointer shrink-0"
+              >
+                <UserPlus className="w-4 h-4 text-zinc-950" />
+                <span>+ เพิ่มสมาชิกใหม่ (สร้าง QR)</span>
+              </button>
             </div>
 
             <div className="space-y-5">
-              {/* Member Selector with Quick Register */}
+              {/* Member Selector */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider">
-                    เลือกรหัสสมาชิกที่จะทำการเช็คอิน:
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setIsRegisterModalOpen(true)}
-                    className="text-xs text-lime-400 hover:text-lime-300 font-black flex items-center gap-1.5 hover:underline cursor-pointer"
-                  >
-                    <UserPlus className="w-4 h-4 text-lime-400" />
-                    <span>+ ลงทะเบียนสมาชิกใหม่ (ถ่ายภาพ/เลือกรูป)</span>
-                  </button>
-                </div>
+                <label className="block text-xs font-bold text-zinc-300 mb-2">
+                  1. เลือกรายชื่อสมาชิกเพื่อแสดง QR Code / เช็คอิน:
+                </label>
                 <select
                   value={selectedMemberId}
                   onChange={(e) => setSelectedMemberId(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-700/80 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-lime-400 font-medium"
+                  className="w-full bg-zinc-950 border border-zinc-700/80 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-lime-400 font-medium cursor-pointer"
                 >
                   {members.map(m => (
                     <option key={m.id} value={m.id}>
@@ -477,14 +445,14 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
               {/* Check-in Type Selector */}
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">
-                  ประเภทการเข้าใช้บริการ:
+                <label className="block text-xs font-bold text-zinc-300 mb-2">
+                  2. ประเภทการเข้าใช้บริการ:
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
-                    { id: 'Gym Entrance', label: 'เข้ายิมทั่วไป', desc: 'ออกกำลังกายอิสระ', color: 'lime' },
-                    { id: 'PT Session', label: 'ฝึกกับ PT (1-on-1)', desc: 'ตัดสิทธิ์คอร์ส 1 ครั้ง', color: 'violet' },
-                    { id: 'Group Class', label: 'เข้าคลาสกลุ่ม', desc: 'โยคะ / ซุมบ้า / ปั่นจักรยาน', color: 'cyan' }
+                    { id: 'Gym Entrance', label: 'เข้ายิมทั่วไป', desc: 'ออกกำลังกายอิสระ' },
+                    { id: 'PT Session', label: 'ฝึกกับ PT (1-on-1)', desc: 'ตัดสิทธิ์คอร์ส 1 ครั้ง' },
+                    { id: 'Group Class', label: 'เข้าคลาสกลุ่ม', desc: 'โยคะ / ซุมบ้า / ปั่นจักรยาน' }
                   ].map((t) => (
                     <button
                       key={t.id}
@@ -507,9 +475,9 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
               {/* Zone Selector */}
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <label className="block text-xs font-bold text-zinc-300 mb-2 flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-lime-400" />
-                  <span>โซนที่เข้าใช้งาน:</span>
+                  <span>3. โซนที่เข้าใช้งาน:</span>
                 </label>
                 <select
                   value={selectedZone}
@@ -526,7 +494,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
               <div className="pt-2">
                 <button
                   onClick={() => handlePerformCheckIn()}
-                  className="w-full py-4 rounded-xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black hover:brightness-110 active:scale-[0.98] transition flex items-center justify-center gap-2 text-base shadow-lg shadow-lime-400/20 cursor-pointer uppercase tracking-wider"
+                  className="w-full py-4 rounded-xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black hover:brightness-110 active:scale-[0.98] transition flex items-center justify-center gap-2 text-base shadow-lg shadow-lime-400/20 cursor-pointer"
                 >
                   <span>บันทึกการเช็คอินทันที</span>
                   <ArrowRight className="w-5 h-5 text-zinc-950" />
@@ -536,9 +504,9 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
           </div>
 
           {/* Recent Check-in Logs Table */}
-          <div className="attendance-panel rounded-3xl bg-zinc-900/90 border border-zinc-800 p-6 shadow-xl">
+          <div className="rounded-3xl bg-zinc-900/90 border border-zinc-800 p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-black text-white flex items-center gap-2 uppercase tracking-wide">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-lime-400" />
                 <span>ประวัติการเช็คอินล่าสุด (Live Attendance)</span>
               </h3>
@@ -596,9 +564,9 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
           <div className="relative w-full max-w-xl bg-zinc-900 border-2 border-lime-400/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5 my-8 glow-athletic">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <h3 className="text-lg font-black text-white flex items-center gap-2 uppercase tracking-wide">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
                 <UserPlus className="w-5 h-5 text-lime-400" />
-                <span>ลงทะเบียนสมาชิกใหม่ (Quick Register)</span>
+                <span>เพิ่มสมาชิกใหม่ & สร้าง QR Code ประจำตัว</span>
               </h3>
               <button
                 type="button"
@@ -611,7 +579,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
             <form onSubmit={handleRegisterSubmit} className="space-y-4 text-xs">
               <div>
-                <label className="block font-bold text-zinc-300 uppercase tracking-wider mb-1">ชื่อ-นามสกุล *</label>
+                <label className="block font-bold text-zinc-300 mb-1">ชื่อ-นามสกุล *</label>
                 <input
                   type="text"
                   required
@@ -624,7 +592,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-zinc-300 uppercase tracking-wider mb-1">เบอร์โทรศัพท์ *</label>
+                  <label className="block font-bold text-zinc-300 mb-1">เบอร์โทรศัพท์ *</label>
                   <input
                     type="tel"
                     required
@@ -635,7 +603,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-bold text-zinc-300 uppercase tracking-wider mb-1">เลขประจำตัว ปชช.</label>
+                  <label className="block font-bold text-zinc-300 mb-1">เลขประจำตัว ปชช.</label>
                   <input
                     type="text"
                     placeholder="1-xxxx-xxxxx-xx-x"
@@ -648,7 +616,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-zinc-300 uppercase tracking-wider mb-1">ประเภทสมาชิก *</label>
+                  <label className="block font-bold text-zinc-300 mb-1">ประเภทสมาชิก *</label>
                   <select
                     value={regType}
                     onChange={(e) => setRegType(e.target.value as any)}
@@ -659,7 +627,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="block font-bold text-zinc-300 uppercase tracking-wider mb-1">สิทธิ์ PT เริ่มต้น (ครั้ง)</label>
+                  <label className="block font-bold text-zinc-300 mb-1">สิทธิ์ PT เริ่มต้น (ครั้ง)</label>
                   <input
                     type="number"
                     min="0"
@@ -671,10 +639,10 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                 </div>
               </div>
 
-              {/* 📸 CAMERA & PHOTO UPLOAD SECTION (Specified in User Request & Screenshot) */}
+              {/* CAMERA & PHOTO UPLOAD SECTION */}
               <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="font-bold text-zinc-200 flex items-center gap-1.5 uppercase tracking-wide">
+                  <label className="font-bold text-zinc-200 flex items-center gap-1.5">
                     <Camera className="w-4 h-4 text-lime-400" />
                     <span>รูปถ่ายประจำตัวสมาชิก (ถ่ายจากกล้อง หรือ เลือกรูป)</span>
                   </label>
@@ -690,7 +658,6 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                   )}
                 </div>
 
-                {/* Camera Error Message if any */}
                 {cameraError && (
                   <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-300 text-[11px] flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
@@ -698,7 +665,6 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                   </div>
                 )}
 
-                {/* If Camera is Active: Show Live Video Feed with Capture Button */}
                 {isCameraActive ? (
                   <div className="space-y-3">
                     <div className="relative rounded-2xl overflow-hidden bg-black border-2 border-lime-400 aspect-video flex items-center justify-center">
@@ -709,7 +675,6 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                         muted 
                         className="w-full h-full object-cover"
                       />
-                      {/* Biometric Target Overlay */}
                       <div className="absolute inset-0 border-2 border-dashed border-lime-400/50 m-6 rounded-2xl pointer-events-none flex items-center justify-center">
                         <div className="w-24 h-24 border border-lime-400/40 rounded-full animate-pulse"></div>
                       </div>
@@ -738,9 +703,7 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                     </div>
                   </div>
                 ) : (
-                  /* Camera is Inactive: Preview Avatar + Options to Launch Camera or Upload File */
                   <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
-                    {/* Avatar Preview */}
                     <div className="relative shrink-0">
                       <img
                         src={regAvatar || defaultPresetAvatar}
@@ -749,18 +712,8 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                           regAvatar ? 'border-lime-400 ring-2 ring-lime-400/30' : 'border-zinc-700'
                         }`}
                       />
-                      {regAvatar ? (
-                        <div className="absolute -bottom-1 -right-1 bg-lime-400 text-zinc-950 rounded-full p-1 shadow">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        </div>
-                      ) : (
-                        <div className="absolute -bottom-1 -right-1 bg-zinc-800 text-zinc-400 rounded-full p-1 border border-zinc-700">
-                          <UserPlus className="w-3.5 h-3.5" />
-                        </div>
-                      )}
                     </div>
 
-                    {/* Action Buttons */}
                     <div className="flex-1 w-full space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <button
@@ -783,11 +736,10 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
 
                       <div className="text-[11px] text-zinc-500">
                         {regAvatar 
-                          ? '✅ อัปเดตรูปถ่ายสำเร็จ รูปนี้จะแสดงบนบัตรสมาชิกดิจิทัล' 
-                          : 'สามารถกดเปิดกล้องเพื่อบันทึกภาพถ่ายสด หรือเลือกไฟล์ภาพ (JPG, PNG) จากเครื่อง'}
+                          ? '✅ อัปเดตรูปถ่ายสำเร็จ พร้อมสร้าง QR Code ประจำตัว' 
+                          : 'กดเปิดกล้องเพื่อถ่ายภาพสด หรือเลือกไฟล์รูปจากเครื่อง'}
                       </div>
 
-                      {/* Hidden File Input */}
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -811,9 +763,9 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black hover:brightness-110 transition shadow-lg shadow-lime-400/25 cursor-pointer uppercase tracking-wider"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black hover:brightness-110 transition shadow-lg shadow-lime-400/25 cursor-pointer"
                 >
-                  ลงทะเบียนและเพิ่มในระบบทันที
+                  ลงทะเบียนและสร้าง QR Code ทันที
                 </button>
               </div>
             </form>

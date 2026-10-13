@@ -27,6 +27,7 @@ import { ContractModal } from './components/ContractModal';
 import { ContractsListView } from './components/ContractsListView';
 import { FinanceView } from './components/FinanceView';
 import { CrmView } from './components/CrmView';
+import { CheckCircle2, QrCode, X } from 'lucide-react';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
@@ -108,6 +109,65 @@ export function App() {
   // Contract Modal state
   const [selectedCourseForContract, setSelectedCourseForContract] = useState<Course | null>(null);
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
+
+  // Scanned QR Confirmation Modal state
+  const [qrScanModalData, setQrScanModalData] = useState<{ member: Member; time: string; message: string } | null>(null);
+
+  // Handle QR Code Scan from Smartphone Camera (?checkin=MB-xxxx&name=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const scannedId = params.get('checkin');
+    if (scannedId) {
+      const scannedName = params.get('name') || 'สมาชิกฟิตเนส';
+      const scannedPhone = params.get('phone') || '081-xxx-xxxx';
+      const scannedType = (params.get('type') === 'VIP' ? 'VIP' : 'Active') as 'Active' | 'VIP';
+      const scannedPt = Number(params.get('pt')) || 0;
+      const scannedJoin = params.get('join') || new Date().toISOString().slice(0, 10);
+
+      let foundMember = members.find(m => m.id === scannedId);
+      if (!foundMember) {
+        foundMember = {
+          id: scannedId,
+          name: scannedName,
+          phone: scannedPhone,
+          email: `${scannedId.toLowerCase()}@fitpulse.com`,
+          idCard: '1-xxxx-xxxxx-xx-x',
+          memberType: scannedType,
+          qrCodeUrl: scannedId,
+          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+          remainingPtSessions: scannedPt,
+          joinDate: scannedJoin,
+        };
+        setMembers(prev => [...prev, foundMember!]);
+      }
+
+      const now = new Date();
+      const timeStr = `${now.toISOString().slice(0, 10)} ${now.toTimeString().slice(0, 8)}`;
+      const newCheckIn: CheckInRecord = {
+        id: `chk-${Date.now()}`,
+        memberId: foundMember.id,
+        memberName: foundMember.name,
+        timestamp: timeStr,
+        checkInType: 'Gym Entrance',
+        zone: 'Zone A - Free Weights & PT Cage',
+        status: 'Success',
+        notes: 'สแกนเช็คอินผ่าน QR Code ด้วยกล้องมือถือสำเร็จ',
+      };
+
+      setCheckIns(prev => [newCheckIn, ...prev]);
+      setGymOccupancy(prev => Math.min(80, prev + 1));
+      setCurrentMemberId(foundMember.id);
+      setActiveTab('checkin');
+      setQrScanModalData({
+        member: foundMember,
+        time: timeStr,
+        message: 'สแกน QR Code เช็คอินเข้ายิมสำเร็จ!'
+      });
+
+      // Clean URL query parameters
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   // Save to LocalStorage effects
   useEffect(() => {
@@ -252,6 +312,7 @@ export function App() {
         return m;
       });
       setMembers(updatedMembers);
+      setCurrentMemberId(existingMember.id);
     } else {
       // Create brand new member!
       const nextNum = 1000 + members.length + 1;
@@ -339,8 +400,8 @@ export function App() {
       setCrmLeads([newLead, ...crmLeads]);
     }
 
-    // Navigate to contracts tab to view the newly signed contract
-    setActiveTab('contracts');
+    // Navigate to Check-in tab so the user immediately sees their newly generated QR Code Pass
+    setActiveTab('checkin');
   };
 
   // Finance: Add Expense
@@ -373,19 +434,21 @@ export function App() {
     const memberExists = members.some(m => m.name === lead.name || m.phone === lead.phone);
     if (!memberExists) {
       const nextNum = 1000 + members.length + 1;
+      const newId = `MB-${nextNum}`;
       const newMember: Member = {
-        id: `MB-${nextNum}`,
+        id: newId,
         name: lead.name,
         phone: lead.phone,
         email: lead.email || '',
         idCard: '1-xxxx-xxxxx-xx-x',
         memberType: lead.stage === 'VIP' ? 'VIP' : 'Active',
-        qrCodeUrl: `MB-${nextNum}`,
+        qrCodeUrl: newId,
         avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
         remainingPtSessions: lead.interestCourse.includes('20') ? 20 : lead.interestCourse.includes('30') ? 30 : 0,
         joinDate: new Date().toISOString().slice(0, 10),
       };
       setMembers([...members, newMember]);
+      setCurrentMemberId(newId);
     }
   };
 
@@ -504,6 +567,51 @@ export function App() {
           currentMember={currentMember}
           onSaveContract={handleSaveContract}
         />
+      )}
+
+      {/* QR Scan Verification Success Modal (when scanned via smartphone camera) */}
+      {qrScanModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+          <div className="bg-zinc-900 border border-lime-400/50 rounded-3xl max-w-md w-full p-6 shadow-2xl text-center space-y-4">
+            <div className="w-16 h-16 rounded-full bg-lime-400/20 border-2 border-lime-400 text-lime-400 flex items-center justify-center mx-auto text-3xl font-black">
+              ✓
+            </div>
+            <div>
+              <span className="inline-block px-3 py-1 rounded-full bg-lime-400/15 text-lime-300 text-xs font-bold mb-2">
+                VERIFIED MEMBER QR PASS
+              </span>
+              <h3 className="text-xl font-black text-white">{qrScanModalData.message}</h3>
+            </div>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-left space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-zinc-400">ชื่อสมาชิก:</span>
+                <span className="text-white font-bold">{qrScanModalData.member.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">รหัสสมาชิก:</span>
+                <span className="text-lime-400 font-mono font-bold">{qrScanModalData.member.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">ประเภทบัตร:</span>
+                <span className="text-violet-400 font-bold">{qrScanModalData.member.memberType}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">สิทธิ์เทรนเนอร์ (PT):</span>
+                <span className="text-white font-bold">{qrScanModalData.member.remainingPtSessions} ครั้ง</span>
+              </div>
+              <div className="flex justify-between border-t border-zinc-800 pt-2">
+                <span className="text-zinc-400">เวลาเช็คอิน:</span>
+                <span className="text-zinc-300 font-mono text-xs">{qrScanModalData.time}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setQrScanModalData(null)}
+              className="w-full py-3 rounded-xl bg-lime-400 hover:bg-lime-300 text-zinc-950 font-black text-sm transition cursor-pointer"
+            >
+              ตกลง / เข้าสู่ระบบบัตรสมาชิก
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Footer - Full Width */}
