@@ -16,10 +16,12 @@ import {
   Zap,
   Activity,
   Download,
-  Smartphone
+  Smartphone,
+  ScanLine
 } from 'lucide-react';
 import gsap from 'gsap';
 import QRCode from 'qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { Member, CheckInRecord } from '../types';
 
 interface CheckInViewProps {
@@ -44,6 +46,11 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
   const [selectedZone, setSelectedZone] = useState('Zone A - Free Weights & PT Cage');
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+
+  // Live QR Camera Scanner state (Front Desk Kiosk Scanner)
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+  const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
 
   // Quick Register Modal state
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
@@ -210,6 +217,83 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
     stopCamera();
     setIsRegisterModalOpen(false);
   };
+
+  // Live QR Code Scanner for Web / Staff Kiosk
+  const startQrScanner = async () => {
+    setIsScannerOpen(true);
+    setScannerError(null);
+    setTimeout(async () => {
+      try {
+        const qrScanner = new Html5Qrcode('qr-reader-container');
+        html5QrCodeRef.current = qrScanner;
+        await qrScanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+          },
+          (decodedText) => {
+            handleQrScanSuccess(decodedText);
+          },
+          () => {
+            // scan failure callback on frame, ignore
+          }
+        );
+      } catch (err: any) {
+        console.error('QR Scanner error:', err);
+        setScannerError('ไม่สามารถเข้าถึงกล้องสำหรับสแกน QR ได้ (กรุณาอนุญาตสิทธิ์กล้อง)');
+      }
+    }, 200);
+  };
+
+  const stopQrScanner = async () => {
+    if (html5QrCodeRef.current) {
+      try {
+        await html5QrCodeRef.current.stop();
+        html5QrCodeRef.current.clear();
+      } catch (e) {
+        console.error('Error stopping QR scanner:', e);
+      }
+      html5QrCodeRef.current = null;
+    }
+    setIsScannerOpen(false);
+  };
+
+  const handleQrScanSuccess = async (decodedText: string) => {
+    await stopQrScanner();
+    // Parse URL query parameter checkin=... or plain MB-xxxx
+    let memberId = '';
+    try {
+      if (decodedText.includes('checkin=')) {
+        const url = new URL(decodedText, window.location.origin);
+        memberId = url.searchParams.get('checkin') || '';
+      } else if (decodedText.startsWith('MB-')) {
+        memberId = decodedText.trim();
+      }
+    } catch {
+      memberId = decodedText.trim();
+    }
+
+    const found = members.find(m => m.id === memberId || m.name === memberId);
+    if (found) {
+      setSelectedMemberId(found.id);
+      handlePerformCheckIn(found.id);
+    } else {
+      setStatusMessage({
+        text: `สแกน QR รหัส "${decodedText}" สำเร็จ แต่ไม่พบข้อมูลสมาชิกในระบบ`,
+        type: 'error'
+      });
+      setTimeout(() => setStatusMessage(null), 5000);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (html5QrCodeRef.current) {
+        html5QrCodeRef.current.stop().catch(() => {});
+      }
+    };
+  }, []);
 
   const handlePerformCheckIn = (memberIdToUse?: string) => {
     const targetId = memberIdToUse || selectedMemberId;
@@ -490,13 +574,23 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                 </select>
               </div>
 
-              {/* Action Button */}
-              <div className="pt-2">
+              {/* Action Buttons: Check-in & Live Camera QR Scanner */}
+              <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
-                  onClick={() => handlePerformCheckIn()}
-                  className="w-full py-4 rounded-xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black hover:brightness-110 active:scale-[0.98] transition flex items-center justify-center gap-2 text-base shadow-lg shadow-lime-400/20 cursor-pointer"
+                  type="button"
+                  onClick={startQrScanner}
+                  className="py-3.5 px-4 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black transition flex items-center justify-center gap-2 text-sm shadow-lg shadow-violet-600/25 cursor-pointer"
                 >
-                  <span>บันทึกการเช็คอินทันที</span>
+                  <ScanLine className="w-5 h-5 text-lime-400" />
+                  <span>เปิดกล้องสแกน QR Code</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handlePerformCheckIn()}
+                  className="py-3.5 px-4 rounded-xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black hover:brightness-110 active:scale-[0.98] transition flex items-center justify-center gap-2 text-sm shadow-lg shadow-lime-400/20 cursor-pointer"
+                >
+                  <span>บันทึกการเช็คอิน</span>
                   <ArrowRight className="w-5 h-5 text-zinc-950" />
                 </button>
               </div>
@@ -769,6 +863,51 @@ export const CheckInView: React.FC<CheckInViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Live QR Camera Scanner Modal (Kiosk Web Scanner) */}
+      {isScannerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+          <div className="relative w-full max-w-md bg-zinc-900 border-2 border-lime-400/40 rounded-3xl p-6 shadow-2xl space-y-4 glow-athletic text-center">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <ScanLine className="w-5 h-5 text-lime-400" />
+                <span>สแกน QR Code เช็คอินผ่านกล้อง</span>
+              </h3>
+              <button
+                type="button"
+                onClick={stopQrScanner}
+                className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {scannerError ? (
+              <div className="p-4 rounded-2xl bg-rose-950/80 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2 text-left">
+                <AlertCircle className="w-5 h-5 shrink-0 text-rose-400" />
+                <span>{scannerError}</span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-400">
+                  ถือบัตรสมาชิกหรือมือถือที่มี QR Code จ่อให้อยู่ในกรอบสี่เหลี่ยม
+                </p>
+                <div className="rounded-2xl overflow-hidden bg-black border-2 border-lime-400/60 p-2">
+                  <div id="qr-reader-container" className="w-full"></div>
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={stopQrScanner}
+              className="w-full py-2.5 rounded-xl border border-zinc-700 text-zinc-300 hover:bg-zinc-800 font-bold text-xs cursor-pointer"
+            >
+              ยกเลิก / ปิดกล้องสแกน
+            </button>
           </div>
         </div>
       )}
